@@ -1,0 +1,111 @@
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+
+from app.database.database import get_db
+from app.services.gold_price_service import GoldPriceService
+from app.services.gold_history_service import GoldHistoryService
+from fastapi import HTTPException
+from app.schemas.gold_calculator import GoldCalculationRequest
+from app.services.gold_calculator_service import GoldCalculatorService
+
+
+
+
+
+router = APIRouter()
+
+gold_service = GoldPriceService()
+history_service = GoldHistoryService()
+
+
+@router.get("/price")
+def get_gold_price():
+
+    price = gold_service.fetch_current_price()
+
+    return {
+        "success": True,
+        "data": {
+            "metal": price["metal"],
+            "currency": price["currency"],
+            "unit": price["unit"],
+            "purity": {
+                "24K": price["price_24k"],
+                "22K": price["price_22k"],
+                "18K": price["price_18k"]
+            },
+            "source": price["source"],
+            "provider_timestamp": price["provider_timestamp"]
+        }
+    }
+
+
+@router.get("/history")
+def get_gold_history(
+    days: int = Query(
+        default=7,
+        ge=1,
+        le=365,
+        description="Number of previous days"
+    ),
+    db: Session = Depends(get_db)
+):
+
+    records = history_service.get_history(
+        db=db,
+        days=days
+    )
+
+    data = []
+
+    for record in records:
+        data.append({
+            "id": record.id,
+            "timestamp": record.created_at,
+            "provider_timestamp": record.provider_timestamp,
+            "24K": record.price_24k,
+            "22K": record.price_22k,
+            "18K": record.price_18k,
+            "currency": record.currency,
+            "unit": record.unit,
+            "source": record.source
+        })
+
+    return {
+        "success": True,
+        "period": {
+            "days": days
+        },
+        "count": len(data),
+        "data": data
+    }
+
+
+calculator_service = GoldCalculatorService()
+
+
+@router.post("/calculate")
+def calculate_gold(
+    request: GoldCalculationRequest
+):
+    try:
+
+        price_data = gold_service.fetch_current_price()
+
+        result = calculator_service.calculate(
+            purity=request.purity,
+            weight_grams=request.weight_grams,
+            price_data=price_data
+        )
+
+        return {
+            "success": True,
+            "data": result
+        }
+
+    except ValueError as error:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(error)
+        )
